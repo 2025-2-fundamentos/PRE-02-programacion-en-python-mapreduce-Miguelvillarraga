@@ -1,102 +1,121 @@
 # pylint: disable=broad-exception-raised
 
-import fileinput
 import glob
 import os
-import shutil
+import string
 import time
-from itertools import groupby
-from toolz.itertoolz import concat, pluck
 
 
-def copy_raw_files_to_input_folder(n):
-    """Generate n copies of the raw files in the input folder"""
-    os.makedirs("files/input", exist_ok=True)
-    raw_files = glob.glob("files/raw/*")
-    if not raw_files:
-        raise Exception("No hay archivos en files/raw para copiar.")
-
-    for i in range(n):
-        for f in raw_files:
-            base = os.path.basename(f)
-            dst = f"files/input/{i}_{base}"
-            shutil.copy(f, dst)
+def read_lines_from_files(input_dir):
+    """Lee todos los archivos del input y devuelve lista de (archivo, línea)."""
+    sequence = []
+    files = glob.glob(f"{input_dir}/*")
+    for file in files:
+        with open(file, "r", encoding="utf-8") as f:
+            for line in f:
+                sequence.append((file, line))
+    return sequence
 
 
-def load_input(input_directory):
-    """Leer todos los archivos del input como un generador de líneas"""
-    files = glob.glob(os.path.join(input_directory, "*"))
-    return fileinput.input(files, openhook=fileinput.hook_encoded("utf-8"))
+def apply_shuffle_and_sort(pairs_sequence):
+    """Ordena los pares por clave (palabra)."""
+    return sorted(pairs_sequence)
 
 
-def preprocess_line(x):
-    """Preprocesar una línea"""
-    return x.strip().lower()
-
-
-def map_line(x):
-    """Map: convierte línea en pares (palabra, 1)"""
-    return [(word, 1) for word in x.split() if word]
-
-
-def mapper(sequence):
-    """Mapper: aplica map_line a todas las líneas"""
-    return concat(map(map_line, map(preprocess_line, sequence)))
-
-
-def shuffle_and_sort(sequence):
-    """Agrupar por clave (palabra)"""
-    sorted_seq = sorted(sequence, key=lambda x: x[0])
-    return ((k, list(pluck(1, g))) for k, g in groupby(sorted_seq, key=lambda x: x[0]))
-
-
-def compute_sum_by_group(group):
-    """Suma la lista de valores"""
-    key, values = group
-    return key, sum(values)
-
-
-def reducer(sequence):
-    """Reducer"""
-    return list(map(compute_sum_by_group, sequence))
-
-
-def create_directory(directory):
-    """Crear directorio de salida"""
-    os.makedirs(directory, exist_ok=True)
-
-
-def save_output(output_directory, sequence):
-    """Guardar resultados en archivo"""
-    output_file = os.path.join(output_directory, "result.txt")
-    with open(output_file, "w", encoding="utf-8") as f:
-        for key, value in sequence:
+def write_results_to_file(result, output_dir):
+    """Escribe resultados en un archivo de salida."""
+    with open(f"{output_dir}/part-00000", "w", encoding="utf-8") as f:
+        for key, value in result:
             f.write(f"{key}\t{value}\n")
 
 
-def create_marker(output_directory):
-    """Crear archivo de finalización"""
-    marker_file = os.path.join(output_directory, "_SUCCESS")
-    with open(marker_file, "w", encoding="utf-8") as f:
-        f.write("Job completed successfully.\n")
+def create_success_file(output_dir):
+    """Crea archivo _SUCCESS para marcar finalización."""
+    with open(f"{output_dir}/_SUCCESS", "w", encoding="utf-8") as f:
+        f.write("")
 
 
-def run_job(input_directory, output_directory):
-    """Ejecución del Job MapReduce"""
-    sequence = load_input(input_directory)
-    sequence = mapper(sequence)
-    sequence = shuffle_and_sort(sequence)
-    sequence = reducer(sequence)
-    create_directory(output_directory)
-    save_output(output_directory, sequence)
-    create_marker(output_directory)
+def create_output_dir_or_fail(output_dir):
+    """Crea el directorio de salida, o falla si ya existe."""
+    if os.path.exists(output_dir):
+        raise Exception(f"Output directory '{output_dir}' already exists.")
+    else:
+        os.makedirs(output_dir)
+
+
+def initialize_directory(directory):
+    """Vacía un directorio o lo crea si no existe."""
+    if os.path.exists(directory):
+        for file in glob.glob(f"{directory}/*"):
+            os.remove(file)
+    else:
+        os.makedirs(directory)
+
+
+def copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n=5):
+    """Copia y multiplica los archivos de raw en input con numeración."""
+    for file in glob.glob(f"{raw_dir}/*"):
+        with open(file, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        for i in range(1, n + 1):
+            raw_filename_with_extension = os.path.basename(file)
+            raw_filename_without_extension = os.path.splitext(
+                raw_filename_with_extension
+            )[0]
+            new_filename = f"{raw_filename_without_extension}_{i}.txt"
+            with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
+                f2.write(text)
+
+
+def wordcount_mapper(sequence):
+    """Transforma líneas en pares (palabra, 1)."""
+    pairs_sequence = []
+    for _, line in sequence:
+        line = line.lower()
+        line = line.translate(str.maketrans("", "", string.punctuation))
+        line = line.replace("\n", "")
+        words = line.split()
+        pairs_sequence.extend((word, 1) for word in words)
+
+    return pairs_sequence
+
+
+def wordcount_reducer(pairs_sequence):
+    """Agrupa y suma los valores por clave (palabra)."""
+    result = []
+    for key, value in pairs_sequence:
+        if result and result[-1][0] == key:
+            result[-1] = (key, result[-1][1] + value)
+        else:
+            result.append((key, value))
+    return result
+
+
+def run_experiment(n, raw_dir, input_dir, output_dir):
+    """Ejecuta el experimento completo sin mapreduce()."""
+    # preparar directorios
+    initialize_directory(input_dir)
+    copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n)
+
+    start_time = time.time()
+
+    sequence = read_lines_from_files(input_dir)
+    pairs_sequence = wordcount_mapper(sequence)
+    pairs_sequence = apply_shuffle_and_sort(pairs_sequence)
+    result = wordcount_reducer(pairs_sequence)
+    create_output_dir_or_fail(output_dir)
+    write_results_to_file(result, output_dir)
+    create_success_file(output_dir)
+
+    end_time = time.time()
+    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
 
 
 if __name__ == "__main__":
-
-    copy_raw_files_to_input_folder(n=1000)
-
-    run_job(
-        "files/input",
-        "files/output",
+    run_experiment(
+        n=10,
+        raw_dir="files/raw",
+        input_dir="files/input",
+        output_dir="files/output",
     )
