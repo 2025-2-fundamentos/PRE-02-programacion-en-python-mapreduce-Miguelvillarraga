@@ -96,12 +96,7 @@ if __name__ == "__main__":
 
     copy_raw_files_to_input_folder(n=1000)
 
-    start_time = time.time()
-
     run_job(
         "files/input",
         "files/output",
     )
-
-    end_time = time.time()
-    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
