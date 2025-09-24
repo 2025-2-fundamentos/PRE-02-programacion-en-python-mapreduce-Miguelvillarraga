@@ -2,14 +2,31 @@
 
 import glob
 import os
+import shutil
 import string
 import time
+from itertools import groupby
 
 
-def read_lines_from_files(input_dir):
-    """Lee todos los archivos del input y devuelve lista de (archivo, línea)."""
+def copy_raw_files_to_input_folder(n):
+    """Generate n copies of the raw files in the input folder"""
+    os.makedirs("files/input", exist_ok=True)
+    raw_files = glob.glob("files/raw/*")
+    if not raw_files:
+        raise Exception("No hay archivos en files/raw para copiar.")
+
+    for i in range(1, n + 1):
+        for f in raw_files:
+            base = os.path.basename(f)
+            name, ext = os.path.splitext(base)
+            dst = f"files/input/{name}_{i}{ext}"
+            shutil.copy(f, dst)
+
+
+def load_input(input_directory):
+    """Read all lines from input directory"""
     sequence = []
-    files = glob.glob(f"{input_dir}/*")
+    files = glob.glob(os.path.join(input_directory, "*"))
     for file in files:
         with open(file, "r", encoding="utf-8") as f:
             for line in f:
@@ -17,105 +34,89 @@ def read_lines_from_files(input_dir):
     return sequence
 
 
-def apply_shuffle_and_sort(pairs_sequence):
-    """Ordena los pares por clave (palabra)."""
-    return sorted(pairs_sequence)
+def preprocess_line(x):
+    """Preprocess the line x"""
+    line = x.lower()
+    line = line.translate(str.maketrans("", "", string.punctuation))
+    return line.strip()
 
 
-def write_results_to_file(result, output_dir):
-    """Escribe resultados en un archivo de salida."""
-    with open(f"{output_dir}/part-00000", "w", encoding="utf-8") as f:
-        for key, value in result:
-            f.write(f"{key}\t{value}\n")
+def map_line(x):
+    """Convert a line into (word,1) pairs"""
+    return [(word, 1) for word in x.split() if word]
 
 
-def create_success_file(output_dir):
-    """Crea archivo _SUCCESS para marcar finalización."""
-    with open(f"{output_dir}/_SUCCESS", "w", encoding="utf-8") as f:
-        f.write("")
-
-
-def create_output_dir_or_fail(output_dir):
-    """Crea el directorio de salida, o falla si ya existe."""
-    if os.path.exists(output_dir):
-        raise Exception(f"Output directory '{output_dir}' already exists.")
-    else:
-        os.makedirs(output_dir)
-
-
-def initialize_directory(directory):
-    """Vacía un directorio o lo crea si no existe."""
-    if os.path.exists(directory):
-        for file in glob.glob(f"{directory}/*"):
-            os.remove(file)
-    else:
-        os.makedirs(directory)
-
-
-def copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n=5):
-    """Copia y multiplica los archivos de raw en input con numeración."""
-    for file in glob.glob(f"{raw_dir}/*"):
-        with open(file, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        for i in range(1, n + 1):
-            raw_filename_with_extension = os.path.basename(file)
-            raw_filename_without_extension = os.path.splitext(
-                raw_filename_with_extension
-            )[0]
-            new_filename = f"{raw_filename_without_extension}_{i}.txt"
-            with open(f"{input_dir}/{new_filename}", "w", encoding="utf-8") as f2:
-                f2.write(text)
-
-
-def wordcount_mapper(sequence):
-    """Transforma líneas en pares (palabra, 1)."""
+def mapper(sequence):
+    """Mapper"""
     pairs_sequence = []
     for _, line in sequence:
-        line = line.lower()
-        line = line.translate(str.maketrans("", "", string.punctuation))
-        line = line.replace("\n", "")
-        words = line.split()
-        pairs_sequence.extend((word, 1) for word in words)
-
+        line = preprocess_line(line)
+        pairs_sequence.extend(map_line(line))
     return pairs_sequence
 
 
-def wordcount_reducer(pairs_sequence):
-    """Agrupa y suma los valores por clave (palabra)."""
+def shuffle_and_sort(sequence):
+    """Shuffle and Sort"""
+    return sorted(sequence, key=lambda x: x[0])
+
+
+def compute_sum_by_group(group):
+    """Sum values for a key"""
+    key, values = group
+    return key, sum(v for _, v in values)
+
+
+def reducer(sequence):
+    """Reducer"""
     result = []
-    for key, value in pairs_sequence:
-        if result and result[-1][0] == key:
-            result[-1] = (key, result[-1][1] + value)
-        else:
-            result.append((key, value))
+    for key, group in groupby(sequence, key=lambda x: x[0]):
+        result.append(compute_sum_by_group((key, group)))
     return result
 
 
-def run_experiment(n, raw_dir, input_dir, output_dir):
-    """Ejecuta el experimento completo sin mapreduce()."""
-    # preparar directorios
-    initialize_directory(input_dir)
-    copy_and_number_raw_files_to_input_folder(raw_dir, input_dir, n)
+def create_directory(directory):
+    """Create Output Directory"""
+    if os.path.exists(directory):
+        raise Exception(f"Output directory '{directory}' already exists.")
+    os.makedirs(directory)
 
-    start_time = time.time()
 
-    sequence = read_lines_from_files(input_dir)
-    pairs_sequence = wordcount_mapper(sequence)
-    pairs_sequence = apply_shuffle_and_sort(pairs_sequence)
-    result = wordcount_reducer(pairs_sequence)
-    create_output_dir_or_fail(output_dir)
-    write_results_to_file(result, output_dir)
-    create_success_file(output_dir)
+def save_output(output_directory, sequence):
+    """Save Output in part-00000"""
+    output_file = os.path.join(output_directory, "part-00000")
+    with open(output_file, "w", encoding="utf-8") as f:
+        for key, value in sequence:
+            f.write(f"{key}\t{value}\n")
 
-    end_time = time.time()
-    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
+
+def create_marker(output_directory):
+    """Create Marker"""
+    marker_file = os.path.join(output_directory, "_SUCCESS")
+    with open(marker_file, "w", encoding="utf-8") as f:
+        f.write("")
+
+
+def run_job(input_directory, output_directory):
+    """Job"""
+    sequence = load_input(input_directory)
+    sequence = mapper(sequence)
+    sequence = shuffle_and_sort(sequence)
+    sequence = reducer(sequence)
+    create_directory(output_directory)
+    save_output(output_directory, sequence)
+    create_marker(output_directory)
 
 
 if __name__ == "__main__":
-    run_experiment(
-        n=10,
-        raw_dir="files/raw",
-        input_dir="files/input",
-        output_dir="files/output",
+
+    copy_raw_files_to_input_folder(n=1000)
+
+    start_time = time.time()
+
+    run_job(
+        "files/input",
+        "files/output",
     )
+
+    end_time = time.time()
+    print(f"Tiempo de ejecución: {end_time - start_time:.2f} segundos")
